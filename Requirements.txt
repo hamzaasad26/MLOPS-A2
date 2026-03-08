@@ -1,0 +1,14 @@
+# Core ML
+scikit-learn==1.4.2
+pandas==2.2.2
+numpy==1.26.4
+
+# MLflow
+mlflow==2.13.2
+
+# Airflow (installed via Docker image – listed here for reference)
+apache-airflow==2.9.2
+apache-airflow-providers-common-sql==1.14.1
+
+# DB adapter for Airflow metadata
+psycopg2-binary==2.9.9

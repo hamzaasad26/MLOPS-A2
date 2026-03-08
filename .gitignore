@@ -1,0 +1,16 @@
+# Environment variables (contains config - add .env.example for reference)
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.so
+.venv/
+venv/
+env/
+
+# Airflow logs (regenerated at runtime)
+logs/

@@ -1,0 +1,276 @@
+# version: '3.8'
+
+# # ─────────────────────────────────────────────────────────────────────────────
+# # Titanic MLOps Stack  –  Airflow 2.9  +  MLflow 2.x
+# # ─────────────────────────────────────────────────────────────────────────────
+# x-airflow-common: &airflow-common
+#   image: apache/airflow:2.9.2-python3.11
+#   environment: &airflow-common-env
+#     AIRFLOW__CORE__EXECUTOR: LocalExecutor
+#     AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+#     AIRFLOW__CORE__FERNET_KEY: ''
+#     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+#     AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+#     AIRFLOW__WEBSERVER__EXPOSE_CONFIG: 'true'
+#     AIRFLOW__WEBSERVER__SECRET_KEY: 'super-secret-key-change-me'
+#     # Allow model logging without permissions issues
+#     AIRFLOW__CORE__ENABLE_XCOM_PICKLING: 'false'
+#     # MLflow tracking URI – reachable from within all containers
+#     MLFLOW_TRACKING_URI: http://mlflow:5000
+#     # Hyperparameters – override per run via env or docker-compose override
+#     GIT_PYTHON_REFRESH: quiet
+#     MODEL_TYPE: ${MODEL_TYPE:-RandomForest}
+#     N_ESTIMATORS: ${N_ESTIMATORS:-100}
+#     MAX_DEPTH: ${MAX_DEPTH:-5}
+#     C_PARAM: ${C_PARAM:-1.0}
+#     # Fix common UID permission issues
+#     AIRFLOW__CORE__DEFAULT_TIMEZONE: UTC
+#     _PIP_ADDITIONAL_REQUIREMENTS: >-
+#       mlflow==2.13.2
+#       scikit-learn==1.4.2
+#       pandas==2.2.2
+#       numpy==1.26.4
+#       psycopg2-binary==2.9.9
+#   volumes:
+#     - ./dags:/opt/airflow/dags
+#     - ./logs:/opt/airflow/logs
+#     - ./plugins:/opt/airflow/plugins
+#     - ./data:/opt/airflow/data
+#     - mlflow_data:/mlflow
+#   user: "${AIRFLOW_UID:-50000}:0"
+#   depends_on:
+#     postgres:
+#       condition: service_healthy
+
+# services:
+
+#   # ── PostgreSQL (Airflow metadata DB) ────────────────────────────────────────
+#   postgres:
+#     image: postgres:15
+#     environment:
+#       POSTGRES_USER: airflow
+#       POSTGRES_PASSWORD: airflow
+#       POSTGRES_DB: airflow
+#     volumes:
+#       - postgres_db_volume:/var/lib/postgresql/data
+#     healthcheck:
+#       test: ["CMD", "pg_isready", "-U", "airflow"]
+#       interval: 5s
+#       retries: 5
+#     restart: always
+
+#   # ── MLflow tracking server ────────────────────────────────────────────────
+#   mlflow:
+#     image: ghcr.io/mlflow/mlflow:v2.13.2
+#     command: >
+#       mlflow server
+#         --host 0.0.0.0
+#         --port 5000
+#         --backend-store-uri sqlite:////mlflow/mlflow.db
+#         --default-artifact-root /mlflow/artifacts
+#         --serve-artifacts
+#         --artifacts-destination /mlflow/artifacts
+#     ports:
+#       - "5000:5000"
+#     volumes:
+#       - mlflow_data:/mlflow
+#     healthcheck:
+#       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+#       interval: 10s
+#       retries: 10
+#       start_period: 30s
+#     restart: always
+
+#   # ── Airflow DB init ───────────────────────────────────────────────────────
+#   airflow-init:
+#     <<: *airflow-common
+#     entrypoint: /bin/bash
+#     command:
+#       - -c
+#       - |
+#         # Fix ownership of mounted volumes so the airflow user can write to them
+#         mkdir -p /opt/airflow/logs /opt/airflow/dags /opt/airflow/plugins /opt/airflow/data
+#         chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/logs \
+#                                             /opt/airflow/dags \
+#                                             /opt/airflow/plugins \
+#                                             /opt/airflow/data
+#         airflow db migrate
+#         airflow users create \
+#           --username admin \
+#           --password admin \
+#           --firstname Admin \
+#           --lastname User \
+#           --role Admin \
+#           --email admin@example.com
+#     user: "0:0"        # run as root ONLY for the init container
+#     environment:
+#       <<: *airflow-common-env
+#     depends_on:
+#       postgres:
+#         condition: service_healthy
+
+#   # ── Airflow Webserver ─────────────────────────────────────────────────────
+#   airflow-webserver:
+#     <<: *airflow-common
+#     command: webserver
+#     ports:
+#       - "8080:8080"
+#     healthcheck:
+#       test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+#       interval: 10s
+#       timeout: 10s
+#       retries: 5
+#     restart: always
+#     depends_on:
+#       airflow-init:
+#         condition: service_completed_successfully
+#       mlflow:
+#         condition: service_healthy
+
+#   # ── Airflow Scheduler ─────────────────────────────────────────────────────
+#   airflow-scheduler:
+#     <<: *airflow-common
+#     command: scheduler
+#     restart: always
+#     depends_on:
+#       airflow-init:
+#         condition: service_completed_successfully
+#       mlflow:
+#         condition: service_healthy
+
+# volumes:
+#   postgres_db_volume:
+#   mlflow_data:
+
+version: '3.8'
+
+x-airflow-common: &airflow-common
+  image: apache/airflow:2.9.2-python3.11
+  environment: &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CORE__FERNET_KEY: ''
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__WEBSERVER__EXPOSE_CONFIG: 'true'
+    AIRFLOW__WEBSERVER__SECRET_KEY: 'super-secret-key-change-me'
+    AIRFLOW__CORE__ENABLE_XCOM_PICKLING: 'false'
+    MLFLOW_TRACKING_URI: http://mlflow:5000
+    GIT_PYTHON_REFRESH: quiet
+    MODEL_TYPE: ${MODEL_TYPE:-RandomForest}
+    N_ESTIMATORS: ${N_ESTIMATORS:-100}
+    MAX_DEPTH: ${MAX_DEPTH:-5}
+    C_PARAM: ${C_PARAM:-1.0}
+    AIRFLOW__CORE__DEFAULT_TIMEZONE: UTC
+    _PIP_ADDITIONAL_REQUIREMENTS: >-
+      mlflow==2.13.2
+      scikit-learn==1.4.2
+      pandas==2.2.2
+      numpy==1.26.4
+      psycopg2-binary==2.9.9
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./logs:/opt/airflow/logs
+    - ./plugins:/opt/airflow/plugins
+    - ./data:/opt/airflow/data
+    - mlflow_data:/mlflow
+  user: "${AIRFLOW_UID:-50000}:0"
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+services:
+
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres_db_volume:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 5s
+      retries: 5
+    restart: always
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.13.2
+    command: >
+      mlflow server
+        --host 0.0.0.0
+        --port 5000
+        --backend-store-uri sqlite:////mlflow/mlflow.db
+        --default-artifact-root /mlflow/artifacts
+        --serve-artifacts
+        --artifacts-destination /mlflow/artifacts
+    ports:
+      - "5000:5000"
+    volumes:
+      - mlflow_data:/mlflow
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 10s
+      retries: 10
+      start_period: 30s
+    restart: always
+
+  airflow-init:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        # Fix ownership of mounted volumes including MLflow artifacts
+        mkdir -p /opt/airflow/logs /opt/airflow/dags /opt/airflow/plugins /opt/airflow/data /mlflow/artifacts
+        chown -R "${AIRFLOW_UID:-50000}:0" /opt/airflow/logs \
+                                            /opt/airflow/dags \
+                                            /opt/airflow/plugins \
+                                            /opt/airflow/data \
+                                            /mlflow
+        airflow db migrate
+        airflow users create \
+          --username admin \
+          --password admin \
+          --firstname Admin \
+          --lastname User \
+          --role Admin \
+          --email admin@example.com
+    user: "0:0"        # run as root ONLY for the init container
+    environment:
+      <<: *airflow-common-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  airflow-webserver:
+    <<: *airflow-common
+    command: webserver
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+    restart: always
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+      mlflow:
+        condition: service_healthy
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    restart: always
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+      mlflow:
+        condition: service_healthy
+
+volumes:
+  postgres_db_volume:
+  mlflow_data:
